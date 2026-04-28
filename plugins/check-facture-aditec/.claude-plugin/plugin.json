@@ -1,0 +1,10 @@
+{
+  "name": "check-facture-aditec",
+  "version": "0.1.0",
+  "description": "Vérification des factures et bons de livraison ADITEC : contrôle des quantités vs commandes, contrôle des prix vs référentiel, mise à jour du référentiel depuis devis.",
+  "author": {
+    "name": "DIMSI",
+    "email": "p.bardinet@dimsi.fr"
+  },
+  "keywords": ["facturation", "ADITEC", "bon de livraison", "devis", "référentiel prix"]
+}

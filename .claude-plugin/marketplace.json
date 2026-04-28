@@ -1,0 +1,30 @@
+{
+  "name": "dimsi-plugins",
+  "owner": {
+    "name": "DIMSI",
+    "email": "p.bardinet@dimsi.fr",
+    "url": "https://github.com/bardinetpaul-lgtm"
+  },
+  "metadata": {
+    "description": "Marketplace DIMSI – plugins métier pour le bâtiment et la facturation",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "feuilles-de-temps-batiment",
+      "source": "./plugins/feuilles-de-temps-batiment",
+      "description": "Traitement automatisé des feuilles de temps manuscrites pour entreprises du bâtiment. OCR, génération Excel avec scores de confiance, et base de données SQLite des heures chantiers.",
+      "version": "0.1.0",
+      "category": "Bâtiment",
+      "keywords": ["feuilles de temps", "OCR", "bâtiment", "heures", "chantier", "Excel", "SQLite"]
+    },
+    {
+      "name": "check-facture-aditec",
+      "source": "./plugins/check-facture-aditec",
+      "description": "Vérification des factures et bons de livraison ADITEC : contrôle des quantités vs commandes, contrôle des prix vs référentiel, mise à jour du référentiel depuis devis.",
+      "version": "0.1.0",
+      "category": "Facturation",
+      "keywords": ["facturation", "ADITEC", "bon de livraison", "devis", "référentiel prix"]
+    }
+  ]
+}
