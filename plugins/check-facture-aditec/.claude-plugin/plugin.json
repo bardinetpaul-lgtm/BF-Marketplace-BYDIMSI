@@ -1,0 +1,9 @@
+{
+  "name": "check-facture-aditec",
+  "version": "0.1.0",
+  "description": "Vérification automatique des factures ADITEC : contrôle des prix par rapport au référentiel, contrôle des quantités par rapport aux commandes, détection des surfacturations.",
+  "author": {
+    "name": "Barros Facades"
+  },
+  "keywords": ["facture", "commande", "prix", "aditec", "controle", "surfacturation"]
+}
