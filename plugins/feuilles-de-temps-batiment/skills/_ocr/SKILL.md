@@ -1,5 +1,5 @@
 ---
-name: ocr-feuilles-de-temps
+name: _ocr
 description: >
   Utiliser ce skill pour effectuer l'OCR des feuilles de temps manuscrites PDF et générer
   le fichier Excel structuré. Se déclenche automatiquement après la sélection du mois, ou quand

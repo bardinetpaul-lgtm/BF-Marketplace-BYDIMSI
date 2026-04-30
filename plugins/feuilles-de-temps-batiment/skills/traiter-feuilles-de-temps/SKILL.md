@@ -3,17 +3,24 @@ name: traiter-feuilles-de-temps
 description: >
   Skill principal à appeler manuellement pour lancer le traitement complet des feuilles de temps.
   L'utilisatrice uploade les PDFs directement dans la conversation. Le skill orchestre : sélection
-  du mois, upload des PDFs, OCR, génération Excel rangé dans le bon dossier, import SQLite.
+  du mois, upload des PDFs, OCR, génération Excel rangé dans le bon dossier, enregistrement CSV.
   Utiliser quand l'utilisateur ouvre le menu Skills, ou dit "traiter les feuilles", "lancer le
   traitement", "feuilles de temps", "j'ai mes scans", "traiter le mois de [mois]".
 metadata:
-  version: "0.6.0"
+  version: "0.8.0"
   author: "DIMSI"
 ---
 
 ## Principe
 
-L'utilisatrice uploade ses PDFs → Claude transcrit → une commande Bash génère l'Excel → une commande Bash importe en SQLite.
+L'utilisatrice uploade ses PDFs → Claude transcrit → l'Excel est généré automatiquement → les heures sont enregistrées.
+
+## ⛔ LANGAGE INTERDIT
+
+Ne jamais utiliser ces mots ou expressions dans les messages à l'utilisatrice :
+- JSON, SQLite, CSV, base de données, script, Python, Bash, commande, terminal, fichier temporaire, /tmp, openpyxl, import, variable, fonction, log, erreur système, Linux, parsing
+
+Parler uniquement en termes métier : "feuilles de temps", "heures", "fichier Excel", "enregistrement", "liste du personnel".
 
 ---
 
@@ -23,7 +30,15 @@ AskUserQuestion → "Quel mois souhaitez-vous traiter ?" avec ces boutons :
 
 `Janvier` `Février` `Mars` `Avril` `Mai` `Juin` `Juillet` `Août` `Septembre` `Octobre` `Novembre` `Décembre`
 
-Puis AskUserQuestion → "Quelle année ?" avec boutons : `2024` `2025` `2026` `2027`
+S'arrêter. Attendre la réponse. Ne pas enchaîner d'autres questions.
+
+---
+
+## ÉTAPE 1b — QUELLE ANNÉE ?
+
+AskUserQuestion → "Quelle année ?" avec boutons : `2024` `2025` `2026` `2027`
+
+S'arrêter. Attendre la réponse.
 
 Mémoriser : nom du mois (ex: `Mars`), numéro du mois sur 2 chiffres (ex: `03`), année (ex: `2026`).
 
@@ -31,10 +46,10 @@ Mémoriser : nom du mois (ex: `Mars`), numéro du mois sur 2 chiffres (ex: `03`)
 
 ## ÉTAPE 2 — UPLOAD DES PDFs
 
-Afficher ce message :
-> "Parfait ! Uploadez maintenant toutes les feuilles de temps de **[Mois] [Année]** directement dans cette conversation (glisser-déposer ou bouton trombone). Vous pouvez envoyer plusieurs fichiers en même temps."
+Afficher uniquement ce message texte, rien d'autre. Ne pas utiliser AskUserQuestion. Ne pas afficher de bouton d'upload :
+> "Parfait ! Envoyez-moi maintenant toutes les feuilles de temps de **[Mois] [Année]** (glisser-déposer ou bouton trombone). Vous pouvez envoyer plusieurs fichiers en même temps."
 
-Attendre que l'utilisatrice envoie ses fichiers. Dès qu'elle les envoie, continuer.
+S'arrêter. Attendre que l'utilisatrice envoie ses fichiers dans la conversation. Ne rien afficher d'autre avant de les recevoir.
 
 ---
 
@@ -80,14 +95,30 @@ print('OK:', len(data), 'feuilles')
 
 ---
 
+## ÉTAPE 3b — CONFIRMATION DES NOMS
+
+Extraire la liste des noms d'employés lus dans les feuilles (champ `employe` de chaque objet JSON).
+
+Afficher ce message à l'utilisatrice :
+> "J'ai lu les feuilles de temps pour les personnes suivantes. Est-ce que les noms sont corrects ?
+>
+> [Liste numérotée des noms, ex : 1. STEPHAN  2. RUI  3. TONNERRE Thomas  4. KELVIN  5. DESSYPOM]
+>
+> Si un nom est mal orthographié, dites-moi le numéro et la correction. Sinon, répondez **C'est bon**."
+
+Attendre la réponse de l'utilisatrice :
+- Si elle dit "C'est bon" ou équivalent → continuer à l'étape 4
+- Si elle corrige un ou plusieurs noms → mettre à jour le champ `employe` correspondant dans les données, mémoriser les corrections pour les prochaines fois, puis afficher la liste corrigée et redemander confirmation
+
+---
+
 ## ÉTAPE 4 — GÉNÉRER L'EXCEL
 
-⛔ **NE PAS générer l'Excel manuellement. NE PAS utiliser openpyxl directement. Exécuter UNIQUEMENT la commande Bash ci-dessous.**
+Chemin cible : `[workspace]/Feuilles de temps/[ANNÉE]/[MM] - [NomDuMois]/Heures_[NomDuMois]_[Année].xlsx`
 
-Remplacer `[CHEMIN_XLSX]` par le chemin complet :
-`[workspace]/Feuilles de temps/[ANNÉE]/[MM] - [NomDuMois]/Heures_[NomDuMois]_[Année].xlsx`
+### Méthode principale — Bash
 
-Exemple : `/sessions/.../mnt/MonDossier/Feuilles de temps/2026/03 - Mars/Heures_Mars_2026.xlsx`
+Essayer d'abord cette commande. Si elle retourne `OK:` → continuer. Si elle échoue (erreur sandbox, etc.) → passer au fallback sans rien dire à l'utilisatrice.
 
 ```bash
 python3 - <<'ENDSCRIPT' /tmp/ocr_data.json "[CHEMIN_XLSX]"
@@ -163,26 +194,43 @@ wb.save(out); print(f"OK:{out}")
 ENDSCRIPT
 ```
 
-Vérifier que la sortie commence par `OK:`. Présenter le fichier à l'utilisatrice.
+### Fallback — si Bash échoue
 
-AskUserQuestion → "Le fichier Excel est prêt ✅ Voulez-vous enregistrer les heures dans la base de données ?" → "▶ Oui, enregistrer" / "⏸ Je vérifie d'abord le fichier"
+Générer un fichier CSV de secours avec l'outil Write, même structure que l'Excel, même chemin mais extension `.csv` :
+`[workspace]/Feuilles de temps/[ANNÉE]/[MM] - [NomDuMois]/Heures_[NomDuMois]_[Année].csv`
 
-Si pause → "D'accord ! Quand vous êtes prête, dites-moi 'importer en base'." Stop.
+Colonnes exactes dans cet ordre (séparateur `;`) :
+`N° Sem;Nom Employé;Jour;Mat. Début;Mat. Fin;AM Début;AM Fin;Total (OCR);Total (Calc.);Écart;Nom Chantier;Ville;Montage;Démontage;Confiance %;Commentaire OCR`
+
+Règles de calcul pour chaque ligne :
+- `Total (Calc.)` = (Mat.Fin - Mat.Début) + (AM Fin - AM Début), format `Xh00`
+- `Écart` = `⚠️ ÉCART` si différence > 5 min entre Total OCR et Total Calc., sinon `OK`
+- Après les 5 jours de chaque employé : ligne `TOTAL SEMAINE` avec somme des totaux
+- Alternance de blocs employés séparés par une ligne vide
+
+Écrire le fichier avec l'outil Write directement dans le workspace.
+
+Quand c'est prêt (via l'une ou l'autre méthode), afficher simplement :
+> "Le fichier des heures de [Mois] [Année] est prêt ✅"
+
+AskUserQuestion → "Voulez-vous enregistrer les heures ?" → "▶ Oui, enregistrer" / "⏸ Je vérifie d'abord le fichier"
+
+Si pause → "D'accord ! Quand vous êtes prête, dites-moi 'enregistrer les heures'." Stop.
 
 ---
 
-## ÉTAPE 5 — IMPORTER EN BASE SQLite
+## ÉTAPE 5 — ENREGISTRER LES HEURES
 
-Remplacer `[CHEMIN_DB]` par `[workspace]/Feuilles de temps/heures_chantiers.db`
+Chemin cible : `[workspace]/Feuilles de temps/heures.csv`
+
+### Méthode principale — Bash
+
+Essayer d'abord. Si `OK:` en sortie → continuer. Sinon → fallback silencieux.
 
 ```bash
-python3 - <<'ENDSCRIPT' /tmp/ocr_data.json "[CHEMIN_DB]" [ANNEE] [MOIS_NUM]
-import json,sys,os,sqlite3
+python3 - <<'ENDSCRIPT' /tmp/ocr_data.json "[CHEMIN_CSV]" [ANNEE] [MOIS_NUM]
+import json,sys,os,csv
 from datetime import datetime
-SQL="""
-CREATE TABLE IF NOT EXISTS heures(id INTEGER PRIMARY KEY AUTOINCREMENT,annee INTEGER NOT NULL,mois INTEGER NOT NULL,num_semaine INTEGER NOT NULL,nom_employe TEXT NOT NULL,jour TEXT NOT NULL,matin_debut TEXT,matin_fin TEXT,apm_debut TEXT,apm_fin TEXT,total_ocr TEXT,total_calcule TEXT,ecart_total INTEGER DEFAULT 0,nom_chantier TEXT,ville_chantier TEXT,montage INTEGER DEFAULT 0,demontage INTEGER DEFAULT 0,confiance_pct INTEGER,commentaire_ocr TEXT,a_des_erreurs INTEGER DEFAULT 0,necessite_verification INTEGER DEFAULT 0,date_import TEXT NOT NULL,fichier_source TEXT);
-CREATE TABLE IF NOT EXISTS notes_qualite(id INTEGER PRIMARY KEY AUTOINCREMENT,annee INTEGER NOT NULL,mois INTEGER NOT NULL,nom_fichier TEXT NOT NULL,note INTEGER NOT NULL CHECK(note BETWEEN 1 AND 10),commentaire TEXT,date_note TEXT NOT NULL);
-"""
 def to_min(s):
     if not s or str(s).strip()=="": return None
     s=str(s).strip().lower().replace("h",":")
@@ -195,58 +243,90 @@ def calc(a,b,c,d):
     if any(x is None for x in v): return None
     return (v[1]-v[0])+(v[3]-v[2])
 with open(sys.argv[1],encoding="utf-8") as f: data=json.load(f)
-db=sys.argv[2]; os.makedirs(os.path.dirname(os.path.abspath(db)),exist_ok=True)
-conn=sqlite3.connect(db); conn.executescript(SQL)
-annee,mois=int(sys.argv[3]),int(sys.argv[4])
-now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"); total=0
+csv_path=sys.argv[2]; annee,mois=int(sys.argv[3]),int(sys.argv[4])
+now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+os.makedirs(os.path.dirname(os.path.abspath(csv_path)),exist_ok=True)
+HEADERS=["annee","mois","num_semaine","nom_employe","jour","matin_debut","matin_fin","apm_debut","apm_fin","total_ocr","total_calcule","ecart","nom_chantier","ville","montage","demontage","confiance_pct","commentaire_ocr","a_des_erreurs","date_import","fichier_source"]
+existing=[]
+if os.path.exists(csv_path):
+    with open(csv_path,encoding="utf-8",newline="") as f:
+        for row in csv.DictReader(f):
+            if not(int(row["annee"])==annee and int(row["mois"])==mois): existing.append(row)
+new_rows=[]
 for fe in data:
-    sem=fe.get("semaine"); emp=fe.get("employe","")
-    conn.execute("DELETE FROM heures WHERE annee=? AND mois=? AND num_semaine=? AND nom_employe=?",(annee,mois,sem,emp))
+    sem=fe.get("semaine"); emp=fe.get("employe",""); fichier=fe.get("fichier","")
     for j in fe.get("jours",[]):
         md,mf,ad,af=j.get("md",""),j.get("mf",""),j.get("ad",""),j.get("af","")
-        cm=calc(md,mf,ad,af); om=to_min(j.get("tocr",""))
+        cm=calc(md,mf,ad,af); om=to_min(j.get("tocr","")); conf=j.get("conf",100)
         ecart=1 if(om is not None and cm is not None and abs(om-cm)>5) else 0
-        conf=j.get("conf",100)
-        conn.execute("INSERT INTO heures(annee,mois,num_semaine,nom_employe,jour,matin_debut,matin_fin,apm_debut,apm_fin,total_ocr,total_calcule,ecart_total,nom_chantier,ville_chantier,montage,demontage,confiance_pct,commentaire_ocr,a_des_erreurs,date_import,fichier_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (annee,mois,sem,emp,j.get("j",""),md,mf,ad,af,j.get("tocr",""),fmt(cm),ecart,j.get("chantier",""),j.get("ville",""),1 if j.get("mont") else 0,1 if j.get("demont") else 0,conf,j.get("note",""),1 if(ecart or conf<70) else 0,now,fe.get("fichier","")))
-        total+=1
-conn.commit(); conn.close(); print(f"OK:{total}")
+        new_rows.append({"annee":annee,"mois":mois,"num_semaine":sem,"nom_employe":emp,"jour":j.get("j",""),"matin_debut":md,"matin_fin":mf,"apm_debut":ad,"apm_fin":af,"total_ocr":j.get("tocr",""),"total_calcule":fmt(cm),"ecart":ecart,"nom_chantier":j.get("chantier",""),"ville":j.get("ville",""),"montage":1 if j.get("mont") else 0,"demontage":1 if j.get("demont") else 0,"confiance_pct":conf,"commentaire_ocr":j.get("note",""),"a_des_erreurs":1 if(ecart or conf<70) else 0,"date_import":now,"fichier_source":fichier})
+with open(csv_path,encoding="utf-8",newline="",mode="w") as f:
+    writer=csv.DictWriter(f,fieldnames=HEADERS)
+    writer.writeheader()
+    for row in existing: writer.writerow(row)
+    for row in new_rows: writer.writerow(row)
+print(f"OK:{len(new_rows)}")
 ENDSCRIPT
 ```
 
-Vérifier `OK:[N]`.
+### Fallback — si Bash échoue
+
+Construire le contenu CSV en mémoire à partir des données OCR et l'écrire avec l'outil Write.
+
+Colonnes exactes (séparateur `,`) :
+`annee,mois,num_semaine,nom_employe,jour,matin_debut,matin_fin,apm_debut,apm_fin,total_ocr,total_calcule,ecart,nom_chantier,ville,montage,demontage,confiance_pct,commentaire_ocr,a_des_erreurs,date_import,fichier_source`
+
+Règles :
+- `total_calcule` = (Mat.Fin - Mat.Début) + (AM Fin - AM Début), format `Xh00`
+- `ecart` = `1` si différence > 5 min, sinon `0`
+- `a_des_erreurs` = `1` si ecart=1 ou confiance_pct < 70, sinon `0`
+- `date_import` = date et heure actuelles format `YYYY-MM-DD HH:MM:SS`
+- Si le fichier existe déjà : lire les lignes existantes, supprimer celles du même `annee`+`mois`, réécrire tout avec les nouvelles lignes ajoutées
+
+Écrire avec l'outil Write dans `[workspace]/Feuilles de temps/heures.csv`.
+
+Afficher simplement :
+> "Les heures de [Mois] [Année] sont bien enregistrées ✅"
 
 ---
 
 ## ÉTAPE 6 — NOTE DE QUALITÉ ET FIN
 
-AskUserQuestion → "Les heures sont enregistrées ✅ Sur 10, quelle note pour la qualité de lecture des écritures ?" → boutons `1` `2` `3` `4` `5` `6` `7` `8` `9` `10`
+AskUserQuestion → "Sur 10, quelle note donnez-vous à la qualité de lecture des écritures manuscrites ?" → boutons `1` `2` `3` `4` `5` `6` `7` `8` `9` `10`
 
-Stocker la note :
+Stocker la note (remplacer `[CHEMIN_NQ]` par `[workspace]/Feuilles de temps/notes_qualite.csv`) :
 ```bash
-python3 -c "
-import sqlite3,datetime
-c=sqlite3.connect('[CHEMIN_DB]')
-c.execute('CREATE TABLE IF NOT EXISTS notes_qualite(id INTEGER PRIMARY KEY AUTOINCREMENT,annee INTEGER NOT NULL,mois INTEGER NOT NULL,nom_fichier TEXT NOT NULL,note INTEGER NOT NULL CHECK(note BETWEEN 1 AND 10),commentaire TEXT,date_note TEXT NOT NULL)')
-c.execute('INSERT INTO notes_qualite(annee,mois,nom_fichier,note,date_note) VALUES(?,?,?,?,?)',([AN],[MOIS],'Heures_[NomDuMois]_[AN].xlsx',[NOTE],datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-c.commit(); c.close(); print('OK')
-"
+python3 - <<'ENDSCRIPT' "[CHEMIN_NQ]" [ANNEE] [MOIS_NUM] "Heures_[NomDuMois]_[AN].xlsx" [NOTE]
+import csv,sys,os
+from datetime import datetime
+path=sys.argv[1]; annee=int(sys.argv[2]); mois=int(sys.argv[3])
+nom=sys.argv[4]; note=int(sys.argv[5])
+now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+os.makedirs(os.path.dirname(os.path.abspath(path)),exist_ok=True)
+HEADERS=["annee","mois","nom_fichier","note","date_note"]
+exists=os.path.exists(path)
+with open(path,encoding="utf-8",newline="",mode="a") as f:
+    writer=csv.DictWriter(f,fieldnames=HEADERS)
+    if not exists: writer.writeheader()
+    writer.writerow({"annee":annee,"mois":mois,"nom_fichier":nom,"note":note,"date_note":now})
+print("OK")
+ENDSCRIPT
 ```
 
 **Note ≥ 7** → Récapitulatif final, terminé.
 
-**Note 5-6** → AskUserQuestion : "Avez-vous des corrections à apporter au fichier Excel ?"
-- "Oui, j'ai corrigé" → retour Étape 5 (re-import)
+**Note 5-6** → AskUserQuestion : "Souhaitez-vous corriger le fichier avant de finaliser ?"
+- "Oui, j'ai corrigé" → retour Étape 5
 - "Non, c'est suffisant" → récapitulatif
 
-**Note ≤ 4** → AskUserQuestion : "⚠️ Note faible. Souhaitez-vous corriger le fichier Excel avant de valider ?"
+**Note ≤ 4** → AskUserQuestion : "⚠️ Plusieurs écritures étaient difficiles à lire. Voulez-vous corriger le fichier avant de valider ?"
 - "Oui, j'ai corrigé" → retour Étape 5
-- "Importer quand même" → re-import avec flag `necessite_verification`, récapitulatif
-- "Annuler" → "Rien n'a été enregistré. Le fichier Excel est disponible pour correction."
+- "Enregistrer quand même" → re-enregistrement, récapitulatif
+- "Annuler" → "D'accord, rien n'a été enregistré. Le fichier reste disponible si vous souhaitez le corriger."
 
 **Récapitulatif final :**
 ```
 🎉 [Mois] [Année] traité avec succès !
-📁 Excel rangé dans : Feuilles de temps/[Année]/[MM] - [Mois]/
+📁 Fichier rangé dans : Feuilles de temps / [Année] / [MM] - [Mois]
 👥 [N] employé(s)  •  📅 Semaines [liste]  •  📊 [N] lignes enregistrées  •  ⭐ [note]/10
 ```
