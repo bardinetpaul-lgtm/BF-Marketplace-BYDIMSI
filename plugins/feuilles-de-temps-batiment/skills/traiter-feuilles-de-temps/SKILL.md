@@ -7,7 +7,7 @@ description: >
   Utiliser quand l'utilisateur ouvre le menu Skills, ou dit "traiter les feuilles", "lancer le
   traitement", "feuilles de temps", "j'ai mes scans", "traiter le mois de [mois]".
 metadata:
-  version: "0.8.0"
+  version: "0.9.0"
   author: "DIMSI"
 ---
 
@@ -122,11 +122,12 @@ Essayer d'abord cette commande. Si elle retourne `OK:` → continuer. Si elle é
 
 ```bash
 python3 - <<'ENDSCRIPT' /tmp/ocr_data.json "[CHEMIN_XLSX]"
-import json,sys,os,subprocess
+import json,sys,os,subprocess,datetime
 try: import openpyxl
 except: subprocess.run([sys.executable,"-m","pip","install","openpyxl","--break-system-packages","-q"],check=True); import openpyxl
 from openpyxl.styles import PatternFill,Font,Alignment
 from openpyxl.comments import Comment
+from openpyxl.formatting.rule import FormulaRule
 H_FILL=PatternFill("solid",fgColor="D9D9D9")
 ERR_FILL=PatternFill("solid",fgColor="FFB347")
 WARN_FILL=PatternFill("solid",fgColor="FFFF99")
@@ -135,52 +136,70 @@ ALT_FILL=PatternFill("solid",fgColor="F5F5F5")
 H_FONT=Font(bold=True,size=10); T_FONT=Font(bold=True,size=10); N_FONT=Font(size=10)
 HEADERS=["N° Sem","Nom Employé","Jour","Mat. Début","Mat. Fin","AM Début","AM Fin","Total (OCR)","Total (Calc.)","Écart","Nom Chantier","Ville","Montage","Démontage","Confiance %","Commentaire OCR"]
 WIDTHS=[9,22,12,11,11,11,11,12,13,10,25,18,10,12,12,44]
-COL_ECART=10; COL_COMMENT=16
+COL_COMMENT=16
 JOURS={"Lundi":0,"Mardi":1,"Mercredi":2,"Jeudi":3,"Vendredi":4}
+TIME_FMT="h:mm"
+CALC_FMT="[h]:mm"
 def to_min(s):
     if not s or str(s).strip()=="": return None
     s=str(s).strip().lower().replace("h",":")
     p=s.split(":")
     try: return int(p[0])*60+(int(p[1]) if len(p)>1 and p[1] else 0)
     except: return None
+def to_time(s):
+    if not s or str(s).strip()=="": return None
+    s=str(s).strip().lower().replace("h",":")
+    p=s.split(":")
+    try:
+        h=int(p[0]); m=int(p[1]) if len(p)>1 and p[1] else 0
+        return datetime.time(h,m)
+    except: return None
 def fmt(m): return "" if m is None else f"{m//60}h{m%60:02d}"
-def calc(a,b,c,d):
-    v=[to_min(x) for x in [a,b,c,d]]
-    if any(x is None for x in v): return None
-    return (v[1]-v[0])+(v[3]-v[2])
 def wh(ws):
     for c,(h,w) in enumerate(zip(HEADERS,WIDTHS),1):
         cl=ws.cell(1,c,h); cl.fill=H_FILL; cl.font=H_FONT; cl.alignment=Alignment(horizontal="center")
         ws.column_dimensions[cl.column_letter].width=w
     ws.freeze_panes="A2"
+    ws.conditional_formatting.add('J2:J1000',FormulaRule(formula=['J2="⚠️ ÉCART"'],fill=ERR_FILL))
 def we(ws,f,row,alt):
     sem=f.get("semaine",""); emp=f.get("employe","")
     jours=sorted(f.get("jours",[]),key=lambda j:JOURS.get(j.get("j",""),9))
-    tom=tcm=0; err=False
+    tom=0; data_start=row
     for j in jours:
         md,mf,ad,af=j.get("md",""),j.get("mf",""),j.get("ad",""),j.get("af","")
         tocr=j.get("tocr",""); conf=j.get("conf",100); note=j.get("note","")
         mont="Oui" if j.get("mont") else ("Non" if md else "")
         dmt="Oui" if j.get("demont") else ("Non" if md else "")
-        cm=calc(md,mf,ad,af); cs=fmt(cm); om=to_min(tocr)
-        ecart=""; ie=False
-        if om is not None and cm is not None:
-            if abs(om-cm)>5: ecart="⚠️ ÉCART"; ie=True; err=True
-            else: ecart="OK"
-        if cm: tcm+=cm
+        om=to_min(tocr)
         if om: tom+=om
-        vals=[sem,emp,j.get("j",""),md,mf,ad,af,tocr,cs,ecart,j.get("chantier",""),j.get("ville",""),mont,dmt,conf,note]
         bg=ALT_FILL if alt else PatternFill()
-        for c,v in enumerate(vals,1):
-            cl=ws.cell(row,c,v); cl.font=N_FONT
-            cl.fill=bg
-            if ie and c==COL_ECART: cl.fill=ERR_FILL
+        # Colonnes statiques (texte)
+        for c,v in [(1,sem),(2,emp),(3,j.get("j","")),(8,tocr),(11,j.get("chantier","")),(12,j.get("ville","")),(13,mont),(14,dmt),(15,conf),(16,note)]:
+            cl=ws.cell(row,c,v); cl.font=N_FONT; cl.fill=bg
             if conf<70 and c==COL_COMMENT: cl.fill=WARN_FILL
             if c==COL_COMMENT and note: cl.comment=Comment(note,"OCR")
+        # Cellules heures — vraies valeurs temps Excel (colonnes D=4, E=5, F=6, G=7)
+        for col,src in [(4,md),(5,mf),(6,ad),(7,af)]:
+            tv=to_time(src)
+            cl=ws.cell(row,col,tv if tv is not None else "")
+            cl.font=N_FONT; cl.fill=bg
+            if tv is not None: cl.number_format=TIME_FMT
+        # Total (Calc.) — formule dynamique (colonne I=9)
+        cl=ws.cell(row,9,f'=IF(OR(D{row}="",E{row}="",F{row}="",G{row}=""),"",(E{row}-D{row})+(G{row}-F{row}))')
+        cl.font=N_FONT; cl.fill=bg; cl.number_format=CALC_FMT
+        # Écart — formule dynamique (colonne J=10)
+        cl=ws.cell(row,10,f'=IF(OR(H{row}="",I{row}=""),"",IFERROR(IF(ABS(I{row}-TIMEVALUE(SUBSTITUTE(H{row},"h",":")))>TIME(0,5,0),"⚠️ ÉCART","OK"),"⚠️ ÉCART"))')
+        cl.font=N_FONT; cl.fill=bg
         row+=1
-    tr=[sem,emp,"TOTAL SEMAINE","","","","",fmt(tom),fmt(tcm),"⚠️ ÉCART" if err else "OK","","","","","",""]
-    for c,v in enumerate(tr,1):
+    data_end=data_start+len(jours)-1
+    # Ligne TOTAL SEMAINE
+    for c,v in [(1,sem),(2,emp),(3,"TOTAL SEMAINE"),(8,fmt(tom)),(10,""),(11,""),(12,""),(13,""),(14,""),(15,""),(16,"")]:
         cl=ws.cell(row,c,v); cl.fill=TOT_FILL; cl.font=T_FONT
+    for c in [4,5,6,7]:
+        cl=ws.cell(row,c,""); cl.fill=TOT_FILL; cl.font=T_FONT
+    # Total Calc. — formule SUM dynamique sur les lignes de données
+    cl=ws.cell(row,9,f'=SUM(I{data_start}:I{data_end})')
+    cl.fill=TOT_FILL; cl.font=T_FONT; cl.number_format=CALC_FMT
     return row+2
 with open(sys.argv[1],encoding="utf-8") as f: data=json.load(f)
 out=sys.argv[2]; os.makedirs(os.path.dirname(os.path.abspath(out)),exist_ok=True)
