@@ -1,12 +1,13 @@
 ---
 name: bon-livraison
 description: >
-  Ce skill analyse un bon de livraison ADITEC, vérifie les prix par rapport au référentiel,
-  et enregistre chaque ligne (référence + couleur + prix) dans la base. Il se déclenche quand
-  l'utilisatrice choisit "Vérifier un bon de livraison" dans le menu principal, ou dit
-  "j'ai un bon de livraison", "vérifier le BL", "contrôler la livraison".
+  Ce skill analyse les bons de livraison ADITEC, vérifie les prix par rapport au référentiel,
+  et enregistre chaque ligne (référence + couleur + prix) dans la base. Il gère les uploads
+  par lots de maximum 10 PDFs pour éviter les surcharges. Il se déclenche quand l'utilisatrice
+  choisit "Vérifier un bon de livraison" dans le menu principal, ou dit "j'ai un bon de livraison",
+  "vérifier le BL", "contrôler la livraison".
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 ## Objectif
@@ -18,22 +19,41 @@ Pour chaque ligne d'un bon de livraison ADITEC :
 - **Créer la référence dans la base si elle est inconnue** (avec son prix et sa couleur)
 - Enregistrer le BL complet dans la table `bons_livraison` et `bons_livraison_lignes`
 
-## Étape 1 — Demande du bon de livraison
+**Nouveauté v0.2.0** : Gestion par lots de 10 PDFs maximum pour éviter les surcharges système.
+
+## Étape 1 — Demande des bons de livraison (par lots)
 
 Afficher ce message et **s'arrêter** :
 
-> "Pour vérifier un bon de livraison, déposez le PDF directement dans la conversation, puis envoyez votre message."
+> "Pour vérifier vos bons de livraison, déposez les PDFs directement dans la conversation.
+> 
+> ⚠️ **Vous pouvez en déposer jusqu'à 10 à la fois.** Si vous en avez plus, je les traiterai par lots.
+> 
+> Une fois vos PDFs déposés, envoyez votre message."
 
-Ne pas utiliser AskUserQuestion. Ne pas continuer avant d'avoir reçu le fichier PDF dans la conversation.
+Ne pas utiliser AskUserQuestion. Ne pas continuer avant d'avoir reçu au moins 1 PDF dans la conversation.
 
-## Étape 2 — Vérification de la base de prix
+## Étape 2 — Vérification du nombre de PDFs
+
+Compter le nombre de fichiers PDF reçus :
+
+- **Si ≤ 10 PDFs** → procéder au traitement (voir Étape 3)
+- **Si > 10 PDFs** → afficher un avertissement et traiter uniquement les 10 premiers :
+
+> "J'ai reçu [N] bons de livraison. Je vais traiter les 10 premiers maintenant, puis je vous demanderai si vous en avez d'autres à vérifier.
+>
+> Traitement des BLs 1-10 en cours..."
+
+Continuer avec les 10 premiers PDFs uniquement.
+
+## Étape 3 — Vérification de la base de prix
 
 Vérifier que `prix_aditec_produits.csv` existe dans le dossier Cowork.
 - Si il n'existe pas → le créer vide (avec les en-têtes) et informer l'utilisatrice :
-  > "Votre base de prix n'existe pas encore. Je vais la créer maintenant et y enregistrer ce bon de livraison."
+  > "Votre base de prix n'existe pas encore. Je vais la créer maintenant et y enregistrer vos bons de livraison."
 - Si il existe → procéder normalement
 
-## Étape 3 — Extraction du bon de livraison
+## Étape 4 — Extraction des bons de livraison
 
 ### Ce que contient un BL ADITEC :
 - En-tête : N° BL, Date, N° Commande, Réf. Commande (= chantier), Notre Référence (= lieu)
@@ -60,13 +80,13 @@ Chantier: BREIZH IMMO — Lieu: GUENIN — Lorient
 - 18062 : MONODECOR GT P1 / 25 Kg, 16,00 SAC, couleur "" (pas de couleur mentionnée dans cet exemple)
 ```
 
-## Étape 4 — Comparaison et mise à jour de la base
+## Étape 5 — Comparaison et mise à jour de la base
 
 **Note : Les BL ADITEC ne contiennent pas de prix.** La comparaison de prix se fait uniquement lors de l'analyse de la facture mensuelle (skill `analyse-facture`).
 
 Pour chaque ligne du BL :
 
-### 4.1 — Chercher dans le CSV produits
+### 5.1 — Chercher dans le CSV produits
 
 ```python
 import pandas as pd, os
@@ -84,7 +104,7 @@ if not masque.any():
 connu = masque.any()
 ```
 
-### 4.2 — Si la référence+couleur est inconnue
+### 5.2 — Si la référence+couleur est inconnue
 → Ajouter dans `prix_aditec_produits.csv` avec `prix_ht` vide (sera renseigné à la première facture) :
 ```python
 nouvelle_ligne = {
@@ -97,10 +117,10 @@ df_produits.to_csv(os.path.join(DOSSIER, "prix_aditec_produits.csv"), index=Fals
 ```
 Marquer dans le rapport : **"Nouveau produit détecté — prix à confirmer sur la prochaine facture"**
 
-### 4.3 — Si la référence+couleur est connue
+### 5.3 — Si la référence+couleur est connue
 → Confirmer simplement qu'elle est dans le CSV. Aucune modification.
 
-### 4.4 — Sauvegarder les CSV
+### 5.4 — Sauvegarder les CSV
 
 Après traitement, sauvegarder uniquement les deux fichiers qui ont pu être modifiés :
 ```python
@@ -110,9 +130,9 @@ sauver_historique(df_historique, DOSSIER)
 
 Les détails du BL (quelles lignes, quel chantier...) sont traités en mémoire uniquement. Pas besoin de les persister.
 
-## Étape 5 — Rapport à l'utilisatrice
+## Étape 6 — Rapport à l'utilisatrice
 
-Présenter un résumé clair :
+Présenter un résumé clair pour chaque BL traité :
 
 ```
 ✅ Bon de livraison N° [NUM_BL] enregistré !
@@ -132,6 +152,43 @@ Si c'est un avoir (quantités négatives) :
 ```
 ℹ️ Ce bon de livraison est un AVOIR (retour de marchandise).
 Les quantités négatives ont bien été enregistrées.
+```
+
+## Étape 7 — Gestion des lots successifs
+
+Après le traitement des 10 premiers PDFs (ou moins si moins de 10 ont été reçus), utiliser **AskUserQuestion** avec une simple question :
+
+**Si 10 PDFs ont été traités (il peut y en avoir d'autres) :**
+
+> "Vous avez [N - 10] autres bons de livraison à vérifier ?"
+
+Options :
+- **Oui, je veux vérifier les autres** — Demander à l'utilisatrice de déposer le lot suivant (jusqu'à 10 de plus)
+- **Non, c'est tout** — Terminer et afficher un résumé global
+
+**Si < 10 PDFs ont été traités :**
+
+> "Vous avez d'autres bons de livraison à vérifier ?"
+
+Options :
+- **Oui, j'en ai d'autres** — Demander à l'utilisatrice de déposer le lot suivant
+- **Non, c'est tout** — Terminer
+
+Boucler jusqu'à ce que l'utilisatrice dise qu'elle n'en a plus.
+
+## Étape 8 — Résumé final
+
+Une fois tous les lots traités, afficher un résumé global :
+
+```
+✅ Tous vos bons de livraison ont été vérifiés !
+
+📊 Résumé :
+- Total de bons de livraison traités : [N]
+- Nouvelles références créées : [X]
+- Références mises à jour : [Y]
+
+✅ Votre base de prix est à jour et prête pour l'analyse de la facture du mois.
 ```
 
 ## Note sur la vérification des prix
